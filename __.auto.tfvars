@@ -1,0 +1,5 @@
+location      = "uksouth"
+shortlocation = "uks"
+app_name      = "gateway"
+iteration     = "100"
+client_prefix = "mbgevp"
