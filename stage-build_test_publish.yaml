@@ -1,0 +1,110 @@
+parameters:
+    SolutionPath: ""
+    TestPath: ""
+    IacPath: ""
+    IacArtifactName: "iac"
+
+stages:
+- stage: build_test_publish
+  pool:
+    vmImage: 'windows-latest'
+
+
+  jobs:
+  - job:  build_test_publish
+    displayName: Restore, Test, and Publish
+    steps:
+
+    - task: UseDotNet@2
+      displayName: "Use .NET Core SDK 6"
+      inputs:
+        packageType: sdk
+        version: 6.0.x
+      condition: ne('${{parameters.SolutionPath}}', '')
+
+    - task: PowerShell@2
+      displayName: Dotnet restore
+      inputs:
+        targetType: 'inline'
+        script: 'dotnet restore ${{parameters.SolutionPath}}'
+      condition: ne('${{parameters.SolutionPath}}', '')
+
+    - task: PowerShell@2
+      displayName: Dotnet Find Vulnerable NuGet Packages
+      inputs:
+        targetType: 'inline'
+        script: |
+          $solutionFilePath = Get-Item '${{parameters.SolutionPath}}'
+          Push-Location -Path $solutionFilePath.Directory
+          dotnet list package --vulnerable
+          Pop-Location
+      condition: ne('${{parameters.SolutionPath}}', '')
+
+    - task: PowerShell@2
+      displayName: Dotnet test
+      inputs:
+        targetType: 'inline'
+        script: |
+          dotnet test `
+          -v=normal `
+          --logger trx `
+          -r ${{parameters.TestPath}}/TestResults `
+          /p:CollectCoverage=true `
+          /p:CoverletOutputFormat=cobertura `
+          /p:CoverletOutput=${{parameters.TestPath}}/Coverage/ `
+          ${{parameters.TestPath}}
+      condition: ne('${{parameters.TestPath}}', '')
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Test results'
+      inputs:
+        testResultsFormat: 'VSTest'
+        testResultsFiles: ${{parameters.TestPath}}/**/*.trx
+        #searchFolder: ${{parameters.TestPath}}/TestResults
+        searchFolder: '$(System.DefaultWorkingDirectory)' # Optional
+        failTaskOnFailedTests: true
+      condition: ne('${{parameters.TestPath}}', '')
+
+    - task: PublishCodeCoverageResults@1
+      displayName: 'Publish Coverage results'
+      inputs:
+        codeCoverageTool: cobertura
+        summaryFileLocation: ${{parameters.TestPath}}/Coverage/*.xml
+        failIfCoverageEmpty: false
+      condition: ne('${{parameters.TestPath}}', '')
+
+    - task: PowerShell@2
+      displayName: Dotnet publish
+      inputs:
+        targetType: 'inline'
+        script: |
+          dotnet publish `
+          -c Release `
+          -o $(Agent.TempDirectory)\WebAppContent\\ `
+          ${{parameters.SolutionPath}}
+      condition: ne('${{parameters.SolutionPath}}', '')
+
+    - task: ArchiveFiles@2
+      displayName: 'Archive Files'
+      inputs:
+        rootFolderOrFile: '$(Agent.TempDirectory)\WebAppContent'
+        includeRootFolder: false
+      condition: ne('${{parameters.SolutionPath}}', '')
+
+    - task: PublishSymbols@2
+      displayName: 'Publish symbols path'
+      inputs:
+        SearchPattern: '**\bin\**\*.pdb'
+        PublishSymbols: false
+      continueOnError: true
+      condition: ne('${{parameters.SolutionPath}}', '')
+
+    - publish: $(build.artifactstagingdirectory)
+      displayName: 'Publish Artifact: function'
+      artifact: function
+      condition: and( ne('${{parameters.SolutionPath}}', '') , succeededOrFailed() )
+
+    - publish: '${{parameters.IacPath}}'
+      displayName: 'Publish Artifact: ${{parameters.IacArtifactName}}'
+      artifact: '${{parameters.IacArtifactName}}'
+      condition: and( ne('${{parameters.IacPath}}', '') , succeededOrFailed() )

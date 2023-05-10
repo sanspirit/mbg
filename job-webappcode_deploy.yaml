@@ -1,0 +1,39 @@
+parameters:
+    Environment: ""
+    AzureServiceConnection: ""
+    WebAppName: ""
+    WebAppResourceGroup: ""
+    AzDOEnvironment: ""
+    AgentOS: '$(Agent.OS)'
+
+stages:
+- stage: job_deploy_code_${{ parameters.Environment }}
+  displayName: Deploy Code to ${{ parameters.Environment }}
+  pool:
+    vmImage: 'windows-latest'
+
+  jobs:
+
+  - deployment:
+    timeoutInMinutes: 180
+    displayName: Deploy Code
+    environment: ${{ parameters.AzDOEnvironment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureCLI@2
+            displayName: Deploy Web App with az cli
+            inputs:
+              azureSubscription:  ${{ parameters.AzureServiceConnection }}
+              scriptType: pscore
+              scriptLocation: inlineScript
+              inlineScript: |
+                $zipPackage = ((Get-ChildItem -Filter *.zip -Path (Join-Path -Path "$(Pipeline.Workspace)" -ChildPath "function") -Recurse) | Select-Object -First 1).FullName
+                
+                az webapp deployment `
+                      source config-zip `
+                      --resource-group  ${{ parameters.WebAppResourceGroup }} `
+                      --name ${{ parameters.WebAppName }} `
+                      --src "$($zipPackage)" `
+                      --timeout 600

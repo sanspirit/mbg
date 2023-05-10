@@ -1,0 +1,40 @@
+parameters:
+    Environment: ""
+    AzureServiceConnection: ""
+
+steps:
+
+- checkout: self
+  clean: true
+  persistCredentials: true
+
+- download: current
+  displayName: Download Terraform Plan Artifacts
+  artifact: $(ArtifactName)
+
+- task: ms-devlabs.custom-terraform-tasks.custom-terraform-installer-task.TerraformInstaller@0
+  displayName: "Set correct Terraform Version for the pipeline"
+  inputs:
+     terraformVersion: $(Terraform.Version)
+
+- task: TerraformTaskV2@2
+  displayName: "Terraform Init"
+  inputs:
+    provider: 'azurerm'
+    command: 'init'
+    commandOptions: '-input=false'
+    backendServiceArm: ${{ parameters.AzureServiceConnection }}
+    backendAzureRmResourceGroupName: $(TerraformBackend.ResourceGroup)
+    backendAzureRmStorageAccountName: $(TerraformBackend.StorageAccount)
+    backendAzureRmContainerName: $(ClientPrefix)-$(Environment)
+    backendAzureRmKey: $(TerraformBackend.FileName)
+    workingDirectory: $(Terraform.Path)
+
+- task: TerraformTaskV2@2
+  displayName: Terraform Apply
+  inputs:
+    provider: 'azurerm'
+    command: 'apply'
+    commandOptions: '-input=false $(Pipeline.Workspace)/$(ArtifactName)/tfplan$(System.JobAttempt)'
+    environmentServiceNameAzureRM: ${{ parameters.AzureServiceConnection }}
+    workingDirectory: ' $(Terraform.Path)'

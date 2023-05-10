@@ -1,0 +1,44 @@
+parameters:
+    Environment: ""
+    AzureServiceConnection: ""
+    FunctionAppName: ""
+    FunctionAppResourceGroup: ""
+    AzDOEnvironment: ""
+    AgentOS: '$(Agent.OS)'
+
+stages: 
+- stage: job_deploy_code_${{ parameters.Environment }}
+  displayName: Deploy Code to ${{ parameters.Environment }}
+  pool:
+    vmImage: 'windows-latest'
+  
+  jobs:
+  #- job:
+  #  displayName : Download Code Artifacts
+  #  steps:
+  #  - download: current
+  #    displayName: Download
+  #    artifact: function
+
+  - deployment:
+    timeoutInMinutes: 180
+    displayName: Deploy Code
+    environment: ${{ parameters.AzDOEnvironment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureCLI@2
+            displayName: Deploy Function App with az cli
+            inputs:
+              azureSubscription:  ${{ parameters.AzureServiceConnection }}
+              scriptType: pscore
+              scriptLocation: inlineScript
+              inlineScript: |
+                $zipPackage = ((Get-ChildItem -Filter *.zip -Path (Join-Path -Path "$(Pipeline.Workspace)" -ChildPath "function") -Recurse) | Select-Object -First 1).FullName
+                az functionapp deployment `
+                      source config-zip `
+                      --resource-group  ${{ parameters.FunctionAppResourceGroup }} `
+                      --name ${{ parameters.FunctionAppName }} `
+                      --src "$($zipPackage)" `
+                      --timeout 600

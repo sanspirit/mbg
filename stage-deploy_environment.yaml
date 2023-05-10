@@ -1,0 +1,44 @@
+parameters:
+  Environment: ""
+  AzDOEnvironment: ""
+  AzureServiceConnection: ""
+  Location: "uksouth"
+ 
+stages:
+- stage: terraform_plan_${{ parameters.Environment }}
+  pool:
+    vmImage: 'windows-latest'
+  displayName: Terraform Plan ${{ parameters.Environment }}
+  variables:
+    Environment: ${{ parameters.Environment }}
+    ArtifactName: ${{ parameters.Environment }}_evp_infrastructure_tfplan_$(System.JobAttempt)
+  jobs:
+  - job: terraform_plan
+    displayName: Terraform Plan
+    steps:
+    - template: job-terraform_plan.yaml
+      parameters:
+        AzureServiceConnection: ${{ parameters.AzureServiceConnection }}
+        Environment: ${{ parameters.Environment }}
+        Location: ${{ parameters.Location }}
+
+- stage: terraform_apply_${{ parameters.Environment }}
+  pool:
+    vmImage: 'windows-latest'
+  displayName: Terraform Apply ${{ parameters.Environment }}
+  variables:
+      Environment: ${{ parameters.Environment }}
+      ArtifactName: ${{ parameters.Environment }}_evp_infrastructure_tfplan_$(System.JobAttempt)
+  jobs:
+  - deployment: terraform_apply
+    timeoutInMinutes: 180
+    displayName: Terraform Apply
+    environment: ${{ parameters.AzDOEnvironment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: job-terraform_apply.yaml
+            parameters:
+              Environment: ${{ parameters.Environment }}
+              AzureServiceConnection: ${{ parameters.AzureServiceConnection }}

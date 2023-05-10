@@ -1,0 +1,30 @@
+# no trigger - CI from Pull Request
+
+trigger: none # Disable CI triggers.
+
+pool: 'Testing AKS'
+
+variables:
+  #- group: Global Variables
+  - name: TerraformBackend.ResourceGroup
+    value: "rg-mbgevp-tfstate"
+  - name: TerraformBackend.StorageAccount
+    value: "mbgevp$(Environment)tfstate"
+  - name: TerraformBackend.FileName
+    value: "mbgevp-gateway.terraform.tfstate"
+  - name: Terraform.Path
+    value: "$(Build.SourcesDirectory)/src/Gateway/iac"
+  - name: Terraform.Version
+    value: "1.1.7"
+  - name: ClientPrefix
+    value: "mbgevp"
+  - name: Location
+    value: "uksouth"
+
+stages:
+# Build, Test, Publish for CI
+- template: /YAML/stage-build_test_ci.yaml
+  parameters:
+    SolutionPath: '$(System.DefaultWorkingDirectory)/src/MGBEventManagement.sln'
+    IacPath: '$(System.DefaultWorkingDirectory)/src/Gateway/iac'
+    TestPath: '$(System.DefaultWorkingDirectory)/src/'

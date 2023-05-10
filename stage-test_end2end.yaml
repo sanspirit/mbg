@@ -1,0 +1,95 @@
+parameters:
+    TestPath: ""
+    Environment: ""
+    AzureConnection: ""
+    ServiceNowUrl: ""
+
+stages:
+- stage: test_end2end
+
+  jobs:
+  - job: test_end2end
+    displayName: Test End to End
+    steps:
+
+    - task: UseDotNet@2
+      displayName: "Use .NET Core SDK 6"
+      inputs:
+        packageType: sdk
+        version: 6.0.x
+      condition: ne('${{parameters.TestPath}}', '')
+
+    - task: PowerShell@2
+      displayName: Dotnet restore
+      inputs:
+        targetType: 'inline'
+        script: 'dotnet restore ${{parameters.TestPath}}'
+      condition: ne('${{parameters.TestPath}}', '')
+
+    - task: AzureCLI@2
+      continueOnError: true
+      displayName: "Run Acceptance Tests (Processing)"
+      inputs:
+        azureSubscription: '${{parameters.AzureConnection}}'
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          [System.Environment]::SetEnvironmentVariable('StorageAccountName', 'sambgevp${{parameters.Environment}}uks')
+          echo "##vso[task.setvariable variable=StorageAccountName]$env:StorageAccountName"
+          [System.Environment]::SetEnvironmentVariable('StorageContainerName', 'eventsdl')
+          echo "##vso[task.setvariable variable=StorageContainerName]$env:StorageContainerName"
+          [System.Environment]::SetEnvironmentVariable('StorageAccountKey', (az keyvault secret show --name datalakesaskey --vault-name kv-mbgevp-${{parameters.Environment}}-core-uks | ConvertFrom-Json).value)
+          echo "##vso[task.setvariable variable=StorageAccountKey;issecret=true]$env:StorageAccountKey"
+          [System.Environment]::SetEnvironmentVariable('ApimInstance', 'apim-mbgevp-${{parameters.Environment}}-uks')
+          echo "##vso[task.setvariable variable=ApimInstance]$env:ApimInstance"
+          [System.Environment]::SetEnvironmentVariable('ServiceNowInstance', '${{parameters.ServiceNowUrl}}')
+          echo "##vso[task.setvariable variable=ServiceNowInstance]$env:ServiceNowInstance"
+          [System.Environment]::SetEnvironmentVariable('ServiceNowClientID', (az keyvault secret show --name snowclientidkey --vault-name kv-mbgevp-${{parameters.Environment}}-core-uks | ConvertFrom-Json).value)
+          echo "##vso[task.setvariable variable=ServiceNowClientID;issecret=true]$env:ServiceNowClientID"
+          [System.Environment]::SetEnvironmentVariable('ServiceNowClientSecret', (az keyvault secret show --name snowclientsecret --vault-name kv-mbgevp-${{parameters.Environment}}-core-uks | ConvertFrom-Json).value)
+          echo "##vso[task.setvariable variable=ServiceNowClientSecret;issecret=true]$env:ServiceNowClientSecret"
+          [System.Environment]::SetEnvironmentVariable('ServiceNowUserId', (az keyvault secret show --name snowuseridkey --vault-name kv-mbgevp-${{parameters.Environment}}-core-uks | ConvertFrom-Json).value)
+          echo "##vso[task.setvariable variable=ServiceNowUserId;issecret=true]$env:ServiceNowUserId"
+          [System.Environment]::SetEnvironmentVariable('ServiceNowPassword', (az keyvault secret show --name snowuserpasswordkey --vault-name kv-mbgevp-${{parameters.Environment}}-core-uks | ConvertFrom-Json).value)
+          echo "##vso[task.setvariable variable=ServiceNowPassword;issecret=true]$env:ServiceNowPassword"
+          [System.Environment]::SetEnvironmentVariable('AppInsightSpClientId', (az keyvault secret show --name evpappinsightclientid --vault-name kv-mbgevp-${{parameters.Environment}}-core-uks | ConvertFrom-Json).value)
+          echo "##vso[task.setvariable variable=AppInsightSpClientId;issecret=true]$env:AppInsightSpClientId"
+          [System.Environment]::SetEnvironmentVariable('AppInsightSpClientSecret', (az keyvault secret show --name evpappinsightclientsecret --vault-name kv-mbgevp-${{parameters.Environment}}-core-uks | ConvertFrom-Json).value)
+          echo "##vso[task.setvariable variable=AppInsightSpClientSecret;issecret=true]$env:AppInsightSpClientSecret"
+          [System.Environment]::SetEnvironmentVariable('AppInsightappId', (az keyvault secret show --name mainappinsightappid --vault-name kv-mbgevp-${{parameters.Environment}}-core-uks | ConvertFrom-Json).value)
+          echo "##vso[task.setvariable variable=AppInsightappId;issecret=true]$env:AppInsightappId"
+          [System.Environment]::SetEnvironmentVariable('AppInsightSptenant', (az keyvault secret show --name evpappinsightclienttenant --vault-name kv-mbgevp-${{parameters.Environment}}-core-uks | ConvertFrom-Json).value)
+          echo "##vso[task.setvariable variable=AppInsightSptenant;issecret=true]$env:AppInsightSptenant"
+          [System.Environment]::SetEnvironmentVariable('EVPStorageConnection', (az keyvault secret show --name evptableconnectionstring --vault-name kv-mbgevp-${{parameters.Environment}}-core-uks | ConvertFrom-Json).value)
+          echo "##vso[task.setvariable variable=EVPStorageConnection;issecret=true]$env:EVPStorageConnection"
+          [System.Environment]::SetEnvironmentVariable('ApimSubscriptionKey', (az keyvault secret show --name secureapisubscriptionkey --vault-name kv-mbgevp-${{parameters.Environment}}-core-uks | ConvertFrom-Json).value)
+          echo "##vso[task.setvariable variable=ApimSubscriptionKey;issecret=true]$env:ApimSubscriptionKey"
+
+          dotnet test `
+          -v=normal `
+          --logger trx `
+          -r ${{parameters.TestPath}}/TestResults `
+          ${{parameters.TestPath}}
+      condition: ne('${{parameters.TestPath}}', '')
+
+    - task: SpecFlowPlus@0
+      displayName: 'Generate LivingDoc'
+      inputs:
+        generatorSource: FeatureFolder
+        #testAssemblyFilePath: ${{parameters.TestPath}}/bin/Debug/net6.0/MBGEventManagement.Specs.dll
+        projectFilePath: ${{parameters.TestPath}}
+        projectName: 'MBGEventManagement.Specs'
+        testExecutionJson: 'src/MBGEventManagement.Specs/bin/Debug/net6.0/TestExecution_*.json' # LivingDoc is run from the $Build.SourcesDirectory location so this property needs to be relative to that location. https://support.specflow.org/hc/en-us/community/posts/360014538798/comments/4406501487121
+        projectLanguage: 'en'
+      timeoutInMinutes: 10
+      condition: always()
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Test results'
+      inputs:
+        testResultsFormat: 'VSTest'
+        testResultsFiles: ${{parameters.TestPath}}/**/*.trx
+        #searchFolder: ${{parameters.TestPath}}/TestResults
+        searchFolder: '$(System.DefaultWorkingDirectory)' # Optional
+        failTaskOnFailedTests: true
+      condition: ne('${{parameters.TestPath}}', '')

@@ -1,0 +1,79 @@
+parameters:
+  Environment: ""
+  AzureServiceConnection: ""
+  Location: ""
+
+steps:
+- checkout: self
+  clean: true
+  persistCredentials: true
+
+- task: ms-devlabs.custom-terraform-tasks.custom-terraform-installer-task.TerraformInstaller@0
+  displayName: "Set correct Terraform Version for the pipeline"
+  inputs:
+     terraformVersion: $(Terraform.Version)
+
+- task: AzureCLI@2
+  displayName: 'Get Terraform State Storage Access Token'
+  inputs:
+    azureSubscription: ${{ parameters.AzureServiceConnection }}
+    scriptType: 'bash'
+    scriptLocation: 'inlineScript'
+    failOnStandardError: false
+    inlineScript: |
+      az group create --location ${{ parameters.Location }} --name $(TerraformBackend.ResourceGroup)
+      az storage account create --name $(TerraformBackend.StorageAccount) --resource-group $(TerraformBackend.ResourceGroup) --location ${{ parameters.Location }} --sku Standard_LRS
+      az storage container create --name $(ClientPrefix)-$(Environment) --account-name $(TerraformBackend.StorageAccount)
+      ACCESS_KEY=$(az storage account keys list -g $(TerraformBackend.ResourceGroup) -n $(TerraformBackend.StorageAccount) | jq -r ".[0].value")
+      echo "setting storage account key variable"
+      echo "##vso[task.setvariable variable=ACCESS_KEY;issecret=true]$ACCESS_KEY"
+
+    ### replace tokens in tf and tfvars.
+- task: replacetokens@5
+  displayName: 'Replace tokens in tfvars and tf'
+  inputs:
+    rootDirectory: '$(System.DefaultWorkingDirectory)'
+    targetFiles: '**/*.tfvars'
+    encoding: 'auto'
+    tokenPattern: 'default'
+    writeBOM: true
+    actionOnMissing: 'warn'
+    keepToken: false
+    actionOnNoFiles: 'continue'
+    enableTransforms: false
+    enableRecursion: false
+    useLegacyPattern: false
+    enableTelemetry: true
+
+- task: TerraformTaskV2@2
+  displayName: "Terraform Init"
+  inputs:
+    provider: 'azurerm'
+    command: 'init'
+    commandOptions: '-input=false'
+    backendServiceArm: ${{ parameters.AzureServiceConnection }}
+    backendAzureRmResourceGroupName: $(TerraformBackend.ResourceGroup)
+    backendAzureRmStorageAccountName: $(TerraformBackend.StorageAccount)
+    backendAzureRmContainerName: $(ClientPrefix)-$(Environment)
+    backendAzureRmKey: $(TerraformBackend.FileName)
+    workingDirectory: $(Terraform.Path)
+
+- task: TerraformTaskV2@2
+  displayName: "Terraform Validate"
+  inputs:
+    provider: 'azurerm'
+    command: 'validate'
+    workingDirectory: $(Terraform.Path)
+
+- task: TerraformTaskV2@2
+  displayName: Terraform Plan
+  inputs:
+    provider: 'azurerm'
+    command: 'plan'
+    commandOptions: '-input=false -var-file=__$(Environment).tfvars -out=tfplan$(System.JobAttempt)'
+    environmentServiceNameAzureRM: ${{ parameters.AzureServiceConnection }}
+    workingDirectory: $(Terraform.Path)
+
+- publish: $(Terraform.Path)/tfplan$(System.JobAttempt)
+  displayName:  Publish Terraform Plan
+  artifact: $(ArtifactName)

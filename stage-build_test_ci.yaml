@@ -1,0 +1,141 @@
+parameters:
+    SolutionPath: ""
+    TestPath: ""
+    IacPath: ""
+    IacArtifactName: "iac"
+
+stages:
+- stage: build_test_publish
+  pool:
+    vmImage: 'windows-latest'
+
+  jobs:
+  - job:  build_test_publish
+    displayName: Restore, Test, and Publish
+    steps:
+
+    - task: UseDotNet@2
+      displayName: "Use .NET Core SDK 6"
+      inputs:
+        packageType: sdk
+        version: 6.0.x
+      condition: ne('${{parameters.SolutionPath}}', '')
+
+    - task: PowerShell@2
+      displayName: 'Dotnet, Restore Packages'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $solutionFilePath = Get-Item '${{parameters.SolutionPath}}'
+          Push-Location -Path "$($solutionFilePath.Directory)"
+          dotnet restore ${{parameters.SolutionPath}}
+      condition: ne('${{parameters.SolutionPath}}', '')
+
+    - task: PowerShell@2
+      displayName: 'Dotnet, Find Vulnerable NuGet Packages'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $solutionFilePath = Get-Item '${{parameters.SolutionPath}}'
+          Push-Location -Path "$($solutionFilePath.Directory)"
+          dotnet list package --vulnerable
+          Pop-Location
+      condition: ne('${{parameters.SolutionPath}}', '')
+
+    - task: PowerShell@2
+      displayName: 'Dotnet, Find Deprecated NuGet Packages'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $solutionFilePath = Get-Item '${{parameters.SolutionPath}}'
+          Push-Location -Path "$($solutionFilePath.Directory)"
+          dotnet list package --deprecated
+          Pop-Location
+      condition: ne('${{parameters.SolutionPath}}', '')
+
+    - task: PowerShell@2
+      displayName: 'Dotnet, Install Tool dotnet-coverage'
+      inputs:
+        targetType: 'inline'
+        script: |
+          dotnet tool install --global dotnet-coverage
+      condition: ne('${{parameters.SolutionPath}}', '')
+
+    - task: PowerShell@2
+      displayName: 'Dotnet, Run Unit Tests with Coverage (if available)'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $solutionFilePath  = Get-Item '${{parameters.SolutionPath}}'
+          $coverageFilesPath = Join-Path -Path $solutionFilePath.Directory -ChildPath coverage
+
+          'create coverage files area'
+
+          New-Item -ItemType Directory -Path $coverageFilesPath -Force
+
+          'Run all Unit Test project tests'
+
+          Push-Location -Path $solutionFilePath.Directory
+
+          $testProjects = Get-ChildItem -Path $solutionFilePath.Directory -Recurse "*.Tests.csproj"
+          foreach ($testProject in $testProjects) {
+            dotnet test `
+                    -v=normal `
+                    --logger trx `
+                    -r ${{parameters.TestPath}}/TestResults `
+                    --collect:"XPlat Code Coverage" `
+                    /p:CollectCoverage=true `
+                    /p:CoverletOutputFormat=cobertura `
+                    /p:CoverletOutput=coverage `
+                    $testProject.FullName
+          }
+
+          'Collecting Coverage Files into central place'
+
+          $allCovFiles = Get-ChildItem -Path $solutionFilePath.Directory -Recurse "coverage.cobertura.xml"
+          $i = 1
+          foreach($covFile in $allCovFiles) {
+            Copy-Item -Path $covFile.FullName -Destination (Join-Path -Path $coverageFilesPath -ChildPath "$($i).coverage.cobertura.xml") -Force
+            $i = $i + 1
+          }
+
+          'Setup and merge coverage files'
+
+          $outputFile = Join-Path -Path $coverageFilesPath -ChildPath "merged.cobertura.xml"
+
+          Set-Location -Path $coverageFilesPath
+
+          dotnet-coverage merge --remove-input-files -r *.coverage.cobertura.xml -o "$($outputFile)" -f cobertura
+
+      condition: ne('${{parameters.TestPath}}', '')
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Test results'
+      inputs:
+        testResultsFormat: 'VSTest'
+        testResultsFiles: ${{parameters.TestPath}}/**/*.trx
+        #searchFolder: ${{parameters.TestPath}}/TestResults
+        searchFolder: '$(System.DefaultWorkingDirectory)' # Optional
+        failTaskOnFailedTests: true
+      condition: ne('${{parameters.TestPath}}', '')
+
+    - task: PublishCodeCoverageResults@1
+      displayName: 'Publish Coverage results'
+      inputs:
+        codeCoverageTool: cobertura
+        summaryFileLocation: ${{parameters.TestPath}}/Coverage/*.xml
+        failIfCoverageEmpty: false
+      condition: ne('${{parameters.TestPath}}', '')
+
+    - task: PublishSymbols@2
+      displayName: 'Publish symbols path'
+      inputs:
+        SearchPattern: '**\bin\**\*.pdb'
+        PublishSymbols: false
+      continueOnError: true
+      condition: ne('${{parameters.SolutionPath}}', '')
+
+    - task: WhiteSource Bolt@20
+      inputs:
+        cwd: '$(System.DefaultWorkingDirectory)/src'
+        advance: true
