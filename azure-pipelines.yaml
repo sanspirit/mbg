@@ -1,0 +1,67 @@
+trigger:
+  branches:
+    include:
+    - main
+
+  paths:
+    include:
+    - 'src/Gateway/*'
+    exclude:
+    - '*'
+
+pool: 'Testing AKS'
+
+variables:
+  #- group: Global Variables
+  - name: TerraformBackend.ResourceGroup
+    value: "rg-mbgevp-tfstate"
+  - name: TerraformBackend.StorageAccount
+    value: "mbgevp$(Environment)tfstate"
+  - name: TerraformBackend.FileName
+    value: "mbgevp-gateway.terraform.tfstate"
+  - name: Terraform.Path
+    value: "$(Build.SourcesDirectory)/src/Gateway/iac"
+  - name: Terraform.Version
+    value: "1.1.7"
+  - name: ClientPrefix
+    value: "mbgevp"
+  - name: Location
+    value: "uksouth"
+  - group: 'EVP'
+
+stages:
+# Build, Test, Publish
+- template: /YAML/stage-build_test_publish.yaml
+  parameters:
+    SolutionPath: ''
+    IacPath: '$(System.DefaultWorkingDirectory)/src/Gateway/iac'
+    TestPath: ''
+
+- ${{ if ne(variables['Build.Reason'], 'PullRequest') }}:
+
+  # DEV
+  - template:  /YAML/stage-deploy_environment.yaml
+    parameters:
+      Environment: dev
+      AzDOEnvironment: 'Development'
+      AzureServiceConnection: 'New Signature - ESB Development - Azure DevOps'
+      Location: $(Location)
+
+  # QA
+  - template: /YAML/stage-deploy_environment.yaml
+    parameters:
+      Environment: qa
+      AzDOEnvironment: 'Test'
+      AzureServiceConnection: 'New Signature - ESB QA - Azure DevOps'
+      Location: $(Location)
+
+  #Only have option to deploy to prod if not a pull request, and is master branch
+  #There is a red-herring error when looking at this in vscode - see https://github.com/microsoft/azure-pipelines-vscode/issues/187
+  - ${{ if and(ne(variables['Build.Reason'], 'PullRequest'), eq(variables['Build.SourceBranch'], 'refs/heads/main'))}}:
+    # Prod
+    - template: /YAML/stage-deploy_environment.yaml
+      parameters:
+        Environment: prod
+        AzDOEnvironment: 'Production'
+        AzureServiceConnection: "New Signature - ESB Prod - Azure DevOps"
+        Location: $(Location)
